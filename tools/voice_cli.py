@@ -12,19 +12,81 @@ Usage:
 import argparse
 import json
 import sys
+import os
 from typing import Dict, Any
+from google.cloud import speech
+from google.cloud import texttospeech
 
 
 def transcribe_audio(file_path: str) -> Dict[str, Any]:
     """Transcribe audio file to text using Google Cloud Speech-to-Text."""
-    # TODO: Implement Google Cloud STT
-    return {"status": "success", "text": ""}
+    try:
+        client = speech.SpeechClient()
+        
+        with open(file_path, "rb") as audio_file:
+            content = audio_file.read()
+        
+        audio = speech.RecognitionAudio(content=content)
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+            sample_rate_hertz=16000,
+            language_code="en-US",
+            enable_automatic_punctuation=True,
+        )
+        
+        response = client.recognize(config=config, audio=audio)
+        
+        transcript = ""
+        for result in response.results:
+            transcript += result.alternatives[0].transcript + " "
+        
+        return {
+            "status": "success",
+            "text": transcript.strip(),
+            "confidence": response.results[0].alternatives[0].confidence if response.results else 0.0
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def synthesize_speech(text: str, output_file: str = None) -> Dict[str, Any]:
     """Convert text to speech using Google Cloud Text-to-Speech."""
-    # TODO: Implement Google Cloud TTS
-    return {"status": "success", "audio_file": output_file or "output.mp3"}
+    try:
+        client = texttospeech.TextToSpeechClient()
+        
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="en-US",
+            name="en-US-Neural2-J",  # High-quality neural voice
+            ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+        )
+        
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3,
+            speaking_rate=1.0,
+            pitch=0.0
+        )
+        
+        response = client.synthesize_speech(
+            input=synthesis_input,
+            voice=voice,
+            audio_config=audio_config
+        )
+        
+        if not output_file:
+            output_file = "output.mp3"
+        
+        with open(output_file, "wb") as out:
+            out.write(response.audio_content)
+        
+        return {
+            "status": "success",
+            "audio_file": output_file,
+            "size_bytes": len(response.audio_content)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def main():

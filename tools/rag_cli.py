@@ -13,32 +13,115 @@ Usage:
 import argparse
 import json
 import sys
+import os
 from typing import Dict, Any, List
+from supabase import create_client, Client
+from openai import OpenAI
+
+
+def get_supabase_client() -> Client:
+    """Initialize and return Supabase client."""
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
+    return create_client(url, key)
+
+
+def get_openai_client() -> OpenAI:
+    """Initialize and return OpenAI client for embeddings."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY must be set")
+    return OpenAI(api_key=api_key)
+
+
+def generate_embedding(text: str) -> List[float]:
+    """Generate embedding for text using OpenAI."""
+    client = get_openai_client()
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return response.data[0].embedding
 
 
 def search_knowledge(query: str, limit: int = 5) -> Dict[str, Any]:
     """Search the knowledge base using vector similarity."""
-    # TODO: Implement Supabase pgvector search
-    return {"status": "success", "results": []}
+    try:
+        supabase = get_supabase_client()
+        query_embedding = generate_embedding(query)
+        
+        # Use Supabase RPC function for vector similarity search
+        response = supabase.rpc(
+            "match_documents",
+            {
+                "query_embedding": query_embedding,
+                "match_threshold": 0.7,
+                "match_count": limit
+            }
+        ).execute()
+        
+        results = []
+        for doc in response.data:
+            results.append({
+                "id": doc["id"],
+                "content": doc["content"],
+                "metadata": doc["metadata"],
+                "similarity": doc["similarity"]
+            })
+        
+        return {"status": "success", "results": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def add_knowledge(text: str, metadata: str = "{}") -> Dict[str, Any]:
     """Add a new document to the knowledge base."""
-    # TODO: Implement Supabase insert with embedding
-    metadata_dict = json.loads(metadata)
-    return {"status": "success", "id": "placeholder"}
+    try:
+        supabase = get_supabase_client()
+        metadata_dict = json.loads(metadata)
+        embedding = generate_embedding(text)
+        
+        response = supabase.table("documents").insert({
+            "content": text,
+            "metadata": metadata_dict,
+            "embedding": embedding
+        }).execute()
+        
+        doc_id = response.data[0]["id"] if response.data else None
+        return {"status": "success", "id": doc_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def delete_knowledge(doc_id: str) -> Dict[str, Any]:
     """Delete a document from the knowledge base."""
-    # TODO: Implement Supabase delete
-    return {"status": "success"}
+    try:
+        supabase = get_supabase_client()
+        supabase.table("documents").delete().eq("id", doc_id).execute()
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def list_knowledge(limit: int = 10, offset: int = 0) -> Dict[str, Any]:
     """List documents in the knowledge base."""
-    # TODO: Implement Supabase list
-    return {"status": "success", "documents": []}
+    try:
+        supabase = get_supabase_client()
+        response = supabase.table("documents").select("id, content, metadata").range(offset, offset + limit - 1).execute()
+        
+        documents = []
+        for doc in response.data:
+            documents.append({
+                "id": doc["id"],
+                "content": doc["content"][:200] + "..." if len(doc["content"]) > 200 else doc["content"],
+                "metadata": doc["metadata"]
+            })
+        
+        return {"status": "success", "documents": documents}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 def main():
